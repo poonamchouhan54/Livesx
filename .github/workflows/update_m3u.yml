@@ -31,9 +31,9 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add live_events.m3u img/
+          git add live_events.m3u cricket_events.m3u img/
           if ! git diff --cached --quiet; then
-            git commit -m "Update live_events.m3u and icons"
+            git commit -m "Update live_events.m3u, cricket_events.m3u and icons"
             git push
           else
             echo "No changes to commit"
