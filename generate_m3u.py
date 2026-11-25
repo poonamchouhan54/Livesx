@@ -13,7 +13,11 @@ LIST_URL = f"{BASE_URL}/enx/"
 ROOT_DIR = Path(__file__).resolve().parent
 MY_IMG_DIR = ROOT_DIR / "myimg"
 OUTPUT_M3U = ROOT_DIR / "live_events.m3u"
+CRICKET_OUTPUT_M3U = ROOT_DIR / "cricket_events.m3u"
+
 GROUP_NAME = "✨✦ʟɪᴠᴇ ꜱᴛʀᴇᴀᴍ✦✨"
+CRICKET_GROUP_NAME = "✨✦ʟɪᴠᴇ ᴇᴠᴇɴᴛꜱ✦✨"
+
 FALLBACK_IMG_URL = (
     "https://img.magnific.com/free-vector/"
     "webinar-live-stream-broadcast-label-design_1017-59935.jpg"
@@ -35,6 +39,8 @@ DEFAULT_HEADERS = {
     "Accept-Language": "en-US,en;q=0.9",
     "Referer": f"{BASE_URL}/",
 }
+
+CRICKET_PATTERN = re.compile(r"\b(cricket|t20|odi|test match|ipl|bbl|psl|cpl|wbbl|icc)\b", re.IGNORECASE)
 
 
 def normalize_url(raw_url: str | None, base_url: str = BASE_URL) -> str | None:
@@ -58,6 +64,19 @@ def is_youtube_url(url: str) -> bool:
         domain in host
         for domain in ("youtube.com", "youtu.be", "youtube-nocookie.com")
     )
+
+
+def detect_cricket_event(li_tag, title: str, href: str) -> bool:
+    """Event ke text, href aur li attributes se check karta hai ki woh cricket hai ya nahi."""
+    attr_values: list[str] = []
+    for k, v in li_tag.attrs.items():
+        if isinstance(v, list):
+            attr_values.append(f"{k} {' '.join(str(x) for x in v)}")
+        else:
+            attr_values.append(f"{k} {v}")
+
+    combined_text = f"{title} {href} {' '.join(attr_values)}"
+    return bool(CRICKET_PATTERN.search(combined_text))
 
 
 def fetch_html(url: str, referer: str | None = None, timeout: int = 20) -> str | None:
@@ -109,12 +128,12 @@ def resolve_icon_url(img_url: str) -> str:
     return FALLBACK_IMG_URL
 
 
-def get_live_events(list_html: str) -> list[dict[str, str]]:
+def get_live_events(list_html: str) -> list[dict]:
     soup = BeautifulSoup(list_html, "html.parser")
-    events: list[dict[str, str]] = []
+    events: list[dict] = []
     seen_hrefs: set[str] = set()
 
-    for li in soup.select('ul#broadcasts li[data-search-item]'):
+    for li in soup.select("ul#broadcasts li[data-search-item]"):
         live_span = li.select_one("span.live")
         if not live_span:
             continue
@@ -134,16 +153,19 @@ def get_live_events(list_html: str) -> list[dict[str, str]]:
             continue
         seen_hrefs.add(href)
 
+        is_cricket = detect_cricket_event(li, title, href)
+
         events.append({
             "title": title,
             "href": href,
             "img": img,
+            "is_cricket": is_cricket,
         })
 
     return events
 
 
-def get_event_embeds(event: dict[str, str]) -> list[str]:
+def get_event_embeds(event: dict) -> list[str]:
     event_html = fetch_html(event["href"], referer=LIST_URL, timeout=15)
     if not event_html:
         return []
@@ -164,7 +186,32 @@ def get_event_embeds(event: dict[str, str]) -> list[str]:
     return valid_embeds
 
 
-def build_m3u() -> str:
+def render_m3u(
+    events: list[dict],
+    results_by_index: dict[int, list[str]],
+    logo_map: dict[str, str],
+    group_name: str,
+) -> str:
+    m3u_lines = ["#EXTM3U"]
+    group_attr = f' group-title="{group_name}"'
+
+    for idx, event in enumerate(events):
+        embeds = results_by_index.get(idx, [])
+        if not embeds:
+            continue
+
+        final_logo = logo_map.get(event["img"], FALLBACK_IMG_URL).replace('"', "")
+        logo_attr = f' tvg-logo="{final_logo}"' if final_logo else ""
+
+        for stream_num, embed_url in enumerate(embeds, start=1):
+            channel_title = f"{event['title']} s-{stream_num}"
+            m3u_lines.append(f"#EXTINF:-1{logo_attr}{group_attr},{channel_title}")
+            m3u_lines.append(embed_url)
+
+    return "\n".join(m3u_lines) + "\n"
+
+
+def build_m3us() -> tuple[str, str]:
     list_html = fetch_html(LIST_URL, referer=f"{BASE_URL}/", timeout=25)
     if not list_html:
         raise RuntimeError("Failed to fetch main broadcast list page.")
@@ -192,29 +239,34 @@ def build_m3u() -> str:
     for src_img in unique_imgs:
         logo_map[src_img] = resolve_icon_url(src_img)
 
-    m3u_lines = ["#EXTM3U"]
+    non_cricket_events = [ev for ev in live_events if not ev["is_cricket"]]
+    cricket_events = [ev for ev in live_events if ev["is_cricket"]]
 
-    for idx, event in enumerate(live_events):
-        embeds = results_by_index.get(idx, [])
-        if not embeds:
-            continue
+    non_cricket_indices = {
+        idx for idx, ev in enumerate(live_events) if not ev["is_cricket"]
+    }
+    cricket_indices = {
+        idx for idx, ev in enumerate(live_events) if ev["is_cricket"]
+    }
 
-        final_logo = logo_map.get(event["img"], FALLBACK_IMG_URL).replace('"', "")
-        logo_attr = f' tvg-logo="{final_logo}"' if final_logo else ""
-        group_attr = f' group-title="{GROUP_NAME}"'
+    main_results = {
+        k: v for k, v in results_by_index.items() if k in non_cricket_indices
+    }
+    cricket_results = {
+        k: v for k, v in results_by_index.items() if k in cricket_indices
+    }
 
-        for stream_num, embed_url in enumerate(embeds, start=1):
-            channel_title = f"{event['title']} s-{stream_num}"
-            m3u_lines.append(f"#EXTINF:-1{logo_attr}{group_attr},{channel_title}")
-            m3u_lines.append(embed_url)
-
-    return "\n".join(m3u_lines) + "\n"
+    main_m3u = render_m3u(non_cricket_events, main_results, logo_map, GROUP_NAME)
+    cricket_m3u = render_m3u(cricket_events, cricket_results, logo_map, CRICKET_GROUP_NAME)
+    return main_m3u, cricket_m3u
 
 
 def main() -> None:
-    content = build_m3u()
-    OUTPUT_M3U.write_text(content, encoding="utf-8")
-    print(f"Saved M3U playlist to {OUTPUT_M3U}")
+    main_m3u, cricket_m3u = build_m3us()
+    OUTPUT_M3U.write_text(main_m3u, encoding="utf-8")
+    CRICKET_OUTPUT_M3U.write_text(cricket_m3u, encoding="utf-8")
+    print(f"Saved main M3U playlist to {OUTPUT_M3U}")
+    print(f"Saved cricket M3U playlist to {CRICKET_OUTPUT_M3U}")
 
 
 if __name__ == "__main__":
