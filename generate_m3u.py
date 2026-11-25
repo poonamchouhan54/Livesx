@@ -13,7 +13,7 @@ LIST_URL = f"{BASE_URL}/enx/"
 ROOT_DIR = Path(__file__).resolve().parent
 MY_IMG_DIR = ROOT_DIR / "myimg"
 OUTPUT_M3U = ROOT_DIR / "live_events.m3u"
-GROUP_NAME = "✨✦ʟɪᴠᴇ ᴇᴠᴇɴᴛꜱ✦✨"
+GROUP_NAME = "✨✦ʟɪᴠᴇ ꜱᴛʀᴇᴀᴍ✦✨"
 FALLBACK_IMG_URL = (
     "https://img.magnific.com/free-vector/"
     "webinar-live-stream-broadcast-label-design_1017-59935.jpg"
